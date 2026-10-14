@@ -15,7 +15,7 @@ if [ ! -d "$sdk/platforms" ]; then
   exit 1
 fi
 
-for dir in . consumer-app; do
+for dir in . consumer-app consumer-github; do
   printf 'sdk.dir=%s\n' "$sdk" > "$dir/local.properties"
 done
 echo "local.properties written (sdk.dir=$sdk)"

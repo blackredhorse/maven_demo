@@ -17,13 +17,18 @@
 ├── mylibrary/                       # 要发布的 Android Library
 │   ├── build.gradle.kts             # ★ AAR/JAR 打包 + 发布配置都在这里
 │   └── src/main/java/com/example/mylibrary/{Greeter,Calculator}.java
-├── consumer-app/                    # 独立的消费方 App，用来验证发布结果真的能用
-│   ├── settings.gradle.kts          # 从 ../build/local-repo 解析产物
+├── consumer-app/                    # 独立的消费方 App（从本地目录仓库解析）
+│   ├── settings.gradle.kts
 │   └── build.gradle.kts
+├── consumer-github/                 # 独立的消费方构建（从 GitHub Packages 解析）
+│   ├── settings.gradle.kts          # https://maven.pkg.github.com/<owner>/<repo>
+│   ├── probe/                       # 只下载不编译，用来单独确认包能不能拉下来
+│   └── app/                         # Android App，真实编译并链接这个 AAR
 ├── scripts/
 │   ├── setup-local.sh               # 生成 local.properties（sdk.dir）
 │   ├── publish-local.sh             # 发布到本地目录仓库（不需要任何凭据）
 │   ├── publish-github.sh            # 发布到 GitHub Packages
+│   ├── verify-github.sh             # 验证 GitHub 上的包真的可用
 │   └── verify-e2e.sh                # 端到端验证：发布 → 消费 → 解包检查
 └── .github/workflows/publish.yml    # CI：打 tag 自动发布
 ```
@@ -125,7 +130,37 @@ dependencies {
 git tag v1.0.0 && git push origin v1.0.0
 ```
 
-## 三、实现要点
+## 三、验证 GitHub 上的包真的可用
+
+`consumer-github/` 是一个独立的 Gradle 构建，**只从 GitHub Packages 拉取**，用来回答
+"包到底能不能用" 这个问题：
+
+```bash
+export GITHUB_ACTOR=<你的用户名>
+export GITHUB_TOKEN=<有 read:packages 权限的 token>
+
+./scripts/verify-github.sh
+```
+
+它做两件事：
+
+1. `:probe:verifyArtifact` —— 只解析、不编译，把 `mylibrary-1.0.0.aar` / `.jar` / `-sources.jar`
+   下载到本地，打印文件大小和内部条目，并断言 AAR 里的 `classes.jar` 含有
+   `com/example/mylibrary/Greeter.class`。这一步不碰 Android SDK。
+2. `:app:assembleDebug` —— 一个真实的 Android App，`implementation("com.example:mylibrary:1.0.0")`
+   然后编译出 APK。编译通过就说明这个包是可用的，而不只是"能下载"。
+
+只想跑第一步：
+
+```bash
+./scripts/verify-github.sh :probe:verifyArtifact
+```
+
+> 没有 token 时会在下载 `.pom` 时直接 401，这是预期行为——GitHub Packages 的 Maven
+> 仓库即使包是 public 也不允许匿名读取。凭据可以用环境变量，也可以写进
+> `~/.gradle/gradle.properties` 的 `github.actor` / `github.token`。
+
+## 四、实现要点
 
 都在 `mylibrary/build.gradle.kts` 里：
 
@@ -135,7 +170,7 @@ git tag v1.0.0 && git push origin v1.0.0
 - **离线友好**：`localRepo` 仓库永远注册；GitHub 仓库只在 `github.owner`/`github.repo` 非空时才注册。
 - **快速失败**：跑 `publish*ToGitHubRepository` 时如果没凭据，直接给出可操作的报错，而不是等一个 HTTP 401。
 
-## 四、常见问题
+## 五、常见问题
 
 - **401 / 403**：token 没设置或权限不够。Classic PAT 需要 `write:packages`；fine-grained PAT 需要该仓库的 Packages 读写权限。发布用 `GITHUB_ACTOR`+`GITHUB_TOKEN` 两个都要有。
 - **409 / `Cannot publish over existing version`**：GitHub Packages 不允许覆盖同一个版本，改 `LIBRARY_VERSION` 或删掉旧的包再发。
